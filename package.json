@@ -1,0 +1,34 @@
+{
+  "name": "imdone-mf",
+  "version": "0.1.0",
+  "description": "Voice layer for Claude Code. Speaks when your shit's done.",
+  "bin": {
+    "imdone": "./src/index.js"
+  },
+  "repository": "8-0-6/imdone-mf",
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js && node scripts/install-listen.js",
+    "start": "node src/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "voice",
+    "tts",
+    "ai"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "vitest": "^4.1.3"
+  }
+}

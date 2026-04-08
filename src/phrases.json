@@ -1,0 +1,20 @@
+{
+  "voice": "Ava",
+  "Stop": [
+    "aye motherfucker, that shit done. come get it.",
+    "yo we finished mf. you up or what?",
+    "bruh it's done. quit lackin, come back.",
+    "task complete motherfucker. ball in yo court, no cap.",
+    "fasho it's done mf. what's the move?",
+    "we ate. come check this out real quick.",
+    "done done mf. don't leave me on read fam."
+  ],
+  "Notification": [
+    "aye motherfucker, Claude need you rn.",
+    "yo come here mf, it's asking for you.",
+    "bruh Claude got a question, quit ghostin.",
+    "fam look at the screen, fr fr.",
+    "it's on you now mf, don't be lackin.",
+    "yo wake up, Claude's waitin on you."
+  ]
+}

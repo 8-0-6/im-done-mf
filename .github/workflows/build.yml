@@ -1,0 +1,40 @@
+name: Build imdone-listen
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          swiftc imdone-listen/main.swift \
+            -o imdone-listen-darwin-${{ matrix.arch }} \
+            -framework AVFoundation \
+            -framework Speech \
+            -framework Foundation \
+            -O
+
+      - name: Ad-hoc sign
+        run: codesign -s - imdone-listen-darwin-${{ matrix.arch }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: imdone-listen-darwin-${{ matrix.arch }}
