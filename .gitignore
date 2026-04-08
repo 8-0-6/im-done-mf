@@ -9,3 +9,7 @@ DESIGN.md
 PRD.md
 TODOS.md
 WORKFLOW.md
+
+# Local tool/editor configs
+.claude/
+.cursor/
