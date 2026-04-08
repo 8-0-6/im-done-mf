@@ -5,7 +5,10 @@
   "bin": {
     "imdone": "./src/index.js"
   },
-  "repository": "8-0-6/im-done-mf",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/8-0-6/im-done-mf.git"
+  },
   "scripts": {
     "postinstall": "node scripts/postinstall.js && node scripts/install-listen.js",
     "start": "node src/index.js",

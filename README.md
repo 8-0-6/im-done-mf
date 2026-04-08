@@ -1,0 +1,120 @@
+# im done mf
+
+Voice layer for Claude Code. Speaks when your shit's done.
+
+```
+npm install -g imdone-mf
+imdone
+```
+
+---
+
+## What it does
+
+You run `imdone` instead of `claude`. It wraps Claude Code and listens for lifecycle events via Claude Code's native HTTP hooks. When something needs your attention — task done, approval needed, notification — it speaks out loud. When Claude finishes talking, it listens for your voice and injects what you said directly into Claude Code. No keyboard required.
+
+**macOS only. Requires Claude Code.**
+
+---
+
+## Install
+
+```bash
+npm install -g imdone-mf
+```
+
+That's it. No compilation. Pre-built binaries for arm64 and x86_64 are downloaded automatically.
+
+### Requirements
+
+- macOS 12+
+- Node.js 18+
+- [Claude Code](https://claude.ai/code) installed (`claude` on your PATH)
+
+---
+
+## Usage
+
+```bash
+imdone                        # starts Claude Code with voice layer
+imdone "build me a todo app"  # pass a task directly
+imdone --diagnose             # check all system dependencies
+```
+
+On first run, `imdone` auto-writes `.claude/settings.json` in your project directory with the HTTP hook config. You never touch that file manually.
+
+---
+
+## How it works
+
+```
+You run: imdone [task]
+
+imdone starts:
+  1. HTTP server on :51234 (receives Claude Code hook events)
+  2. Claude Code via PTY (your terminal works exactly as normal)
+
+When Claude Code fires a Stop or Notification hook:
+  → imdone speaks the event out loud via macOS `say`
+  → activates mic (SFSpeechRecognizer, fully offline)
+  → prints "I heard: [transcript]"
+  → injects your response directly into Claude Code — no paste needed
+```
+
+All audio is local. No API calls, no network, no cloud.
+
+---
+
+## Customize phrases
+
+Edit `~/.imdone/phrases.json` (created on first run):
+
+```json
+{
+  "voice": "Rocko (English (US))",
+  "Stop": [
+    "yo your shit's done mf",
+    "aye, task complete, what's next"
+  ],
+  "Notification": [
+    "aye, claude needs you"
+  ]
+}
+```
+
+Any `say`-compatible voice name works. Run `say -v ?` to list installed voices.
+
+---
+
+## Upgrade STT accuracy
+
+The default STT (SFSpeechRecognizer) is great for short commands. For technical instructions like "fix the auth bug in users.ts", install whisper.cpp:
+
+```bash
+imdone --setup-whisper
+```
+
+Downloads the base model (~74MB) and compiles with Metal acceleration. Runs fully offline.
+
+---
+
+## Troubleshoot
+
+```bash
+imdone --diagnose
+```
+
+Checks: `say` on PATH, `claude` on PATH, `.claude/settings.json` hook URL, `phrases.json` valid, `imdone-listen` binary present, port 51234 available.
+
+**Port conflict:**
+```bash
+IMDONE_PORT=51235 imdone
+```
+
+**Microphone permission denied:** System Settings → Privacy & Security → Microphone → enable Terminal (or your terminal app).
+
+---
+
+## License
+
+MIT
