@@ -1,0 +1,12 @@
+---
+description: Canonical GitHub identity for this repo and related work
+alwaysApply: true
+---
+
+The maintainer’s GitHub account is **https://github.com/8-0-6**. Use this for:
+
+- Default `origin` / repository URLs (`8-0-6/im-done-mf`, etc.)
+- Release links, issue/PR references, and npm `repository` fields
+- Expect commits to be attributed to **8-0-6** with email **1422643205@qq.com** (verified on that GitHub account)
+
+Do not assume or substitute other GitHub usernames (e.g. bobwang47) for this project.
