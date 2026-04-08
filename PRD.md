@@ -1,6 +1,6 @@
 # PRD: im done mf
 
-**Status:** v0 decisions locked — ready for architecture planning.
+**Status:** v0 shipped. Architecture planned, spiked, and implemented. See DESIGN.md.
 
 ---
 
@@ -49,7 +49,7 @@ Saying "no" early prevents scope creep and sets expectations for contributors.
 | #   | Question                    | Decision                                                                                                                                                                                                                                                                                                                                                                 |
 | --- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Q4  | How to observe Claude Code? | **Native Claude Code HTTP Hooks** (configured in `.claude/settings.json`). `imdone` runs a local HTTP server on `:51234`. Claude Code POSTs lifecycle events to it. Zero invasiveness — official API. IPC architecture: HTTP server chosen over PTY wrapper and pure hook scripts (see DESIGN.md).                                                                       |
-| Q5  | Voice I/O stack?            | **TTS: macOS `say` command** (fully offline, built-in). **STT v0: macOS SFSpeechRecognizer** (offline, built-in, zero setup — works for short commands like "yes", "ship it", "stop"). **STT upgrade: whisper.cpp** via `imdone --setup-whisper` (better for technical instructions; opt-in). Clipboard injection for v0 voice response. File watcher injection in v0.1. |
+| Q5  | Voice I/O stack?            | **TTS: macOS `say` command** (fully offline, built-in). **STT v0: macOS SFSpeechRecognizer** (offline, built-in, zero setup — works for short commands like "yes", "ship it", "stop"). **STT upgrade: whisper.cpp** via `imdone --setup-whisper` (better for technical instructions; opt-in). **Voice injection v0: direct PTY stdin injection** — `ptyChild.write(transcript + '\r')`, no paste required. File watcher injection deferred to v0.1. |
 
 
 ### Trigger model

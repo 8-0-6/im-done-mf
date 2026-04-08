@@ -292,13 +292,14 @@ imdone                     ← starts claude + voice layer. that's it.
 ## Diagnostics
 
 `imdone --diagnose` checks and reports:
-- [ ] HTTP server is running on :51234
-- [ ] .claude/settings.json has correct hook config (auto-written on first run)
-- [ ] `say` command works (plays 1-second test tone)
-- [ ] Microphone permission granted
-- [ ] phrases.json exists and is valid JSON
-- [ ] imdone-listen binary found and correct arch
-- [ ] whisper.cpp installed (if --setup-whisper was run)
+- [x] `say` command on PATH
+- [x] `claude` on PATH
+- [x] `.claude/settings.json` has correct hook URL (auto-written on every `imdone` start)
+- [x] `phrases.json` exists and is valid JSON
+- [x] `imdone-listen` binary present in `bin/`
+- [x] Port 51234 (or `IMDONE_PORT`) is available
+
+Exits 0 if all pass, 1 if any fail. Also: `imdone --test-voice` fires a fake Stop event to test the full TTS path without Claude Code running.
 
 Run this when something isn't working. Also: `imdone --test-voice` fires a fake Stop event to test the full TTS path without needing Claude Code running.
 
@@ -329,16 +330,19 @@ Framework: Jest or Vitest (Node.js). Mock `say`, mock `imdone-listen`.
 
 ---
 
-## Next Steps (ordered)
+## What Shipped (v0)
 
-1. **Spike** — HTTP hook payload schema + SFSpeechRecognizer offline + PTY stdin injection timing. (1 day. Gates everything.)
-2. **TTS on Stop** — HTTP server + node-pty spawning claude + `say`. Record the viral clip. (2 hours after spike.)
-3. **First-run hook setup** — Auto-write .claude/settings.json. (CC: ~10min.)
-4. **phrases.json** — Default phrase set, ~10 per event type. (1 hour.)
-5. **Tests** — Jest/Vitest, ~13 unit tests. (CC: ~20min.)
-6. **imdone-listen** — Swift CLI, arm64+x86_64, GitHub Actions matrix build. (1 day.)
-7. **Direct PTY injection** — STT → ptyChild.write(transcript + '\n'). v0 full loop complete. (2 hours.)
-8. **`--diagnose` command** — Checklist of all system deps. (CC: ~15min.)
+All sprints complete as of 2026-04-08.
+
+1. **Spike** — DONE. HTTP payload schema, SFSpeechRecognizer offline, PTY stdin injection timing all verified. See "Open Questions — RESOLVED" above.
+2. **TTS on Stop** — DONE. HTTP server on `:51234`, `node-pty` spawns `claude`, Stop event → `say -v [voice] "[phrase]"`.
+3. **Hook setup (every launch)** — DONE. `syncHooks()` atomically merges Stop + Notification into `.claude/settings.json` on every `imdone` start.
+4. **phrases.json** — DONE. `~/.imdone/phrases.json` created on first run with defaults. Voice constant lives here. Validated at startup.
+5. **Tests** — DONE. Vitest, 17 unit tests covering HTTP handler, debounce, queue, phrases, say timeout, PTY injection, hook setup.
+6. **imdone-listen** — DONE. Universal binary (arm64 + x86_64 via lipo). GitHub Actions matrix build. Ad-hoc signed. Distributed via `npm optionalDependencies` + `install-listen.js`.
+7. **Direct PTY injection** — DONE. `listenAndInject()` runs after Stop TTS; prints "I heard: [transcript]"; injects via `ptyChild.write(transcript + '\r')`.
+8. **`--diagnose` command** — DONE. Checks all system deps, prints pass/fail with fix hints, exits 0 if all pass.
+9. **Piper TTS opt-in** — DONE. `imdone --setup-piper` downloads binary + en_US-lessac-high model to `~/.imdone/piper/`. Falls back to `say` if not installed.
 
 ---
 

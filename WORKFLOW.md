@@ -79,9 +79,9 @@ Every 3 sprints:
 | Sprint | What | Status |
 |--------|------|--------|
 | 1 | Spike — verify HTTP payload, SFSpeechRecognizer offline, PTY injection | DONE |
-| 2 | TTS on Stop — HTTP server + node-pty + say | todo |
-| 3 | Hook setup + phrases.json | todo |
-| 4 | Tests (17 unit tests) | todo |
+| 2 | TTS on Stop — HTTP server + node-pty + say | DONE |
+| 3 | Hook setup + phrases.json | DONE |
+| 4 | Tests (17 unit tests) | DONE |
 | 5 | imdone-listen Swift CLI + GitHub Actions | DONE |
 | 6 | PTY injection full loop (STT → inject) | DONE |
 | 7 | --diagnose command | DONE |

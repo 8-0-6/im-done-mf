@@ -40,12 +40,12 @@ Core user promise: walk away from your terminal. Get called back when Claude fin
 9. **macOS only v0** — Linux/Windows deferred.
 10. **npm install -g distribution** — not Homebrew, not GitHub binary releases.
 
-## Open questions (require spike before building)
+## Open questions — RESOLVED (spike 2026-04-08)
 
-1. HTTP hook payload schema — field names unverified. Run a debug server first.
-2. SFSpeechRecognizer offline behavior — works offline for en-US on macOS 14+? Needs test.
-3. Claude Code Stop hook behavior — does claude block/wait after firing Stop? Needs test.
-4. Swift binary Gatekeeper — ad-hoc signing sufficient for v0?
+1. **HTTP hook payload schema** — VERIFIED. Field is `hook_event_name`. Response must be JSON `{}` (plain text causes "JSON validation failed" in Claude Code UI). Claude Code blocks on Stop hook and shows "running stop hook" animation while waiting.
+2. **SFSpeechRecognizer offline** — CONFIRMED. `supportsOnDeviceRecognition: true` on Apple Silicon macOS (tested on Darwin 25.2). No network required for en-US.
+3. **Claude Code Stop hook behavior** — CONFIRMED BLOCKS. Claude Code waits for HTTP response before continuing. This is the TTS speaking window.
+4. **Swift binary Gatekeeper** — RESOLVED. Ad-hoc signing (`codesign -s -`) is sufficient. GitHub Actions matrix build (macos-14 arm64 + macos-13 x86_64), distributed via npm optionalDependencies.
 
 ## What NOT to do
 
