@@ -4,8 +4,9 @@ import Foundation
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-let SILENCE_TIMEOUT: TimeInterval = 1.5
-let MAX_DURATION: TimeInterval    = 30.0
+let INITIAL_SPEECH_TIMEOUT: TimeInterval = 6.0
+let SILENCE_TIMEOUT: TimeInterval        = 1.5
+let MAX_DURATION: TimeInterval           = 30.0
 
 // ── Speech auth ───────────────────────────────────────────────────────────────
 
@@ -36,10 +37,12 @@ guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
 let engine  = AVAudioEngine()
 let request = SFSpeechAudioBufferRecognitionRequest()
 request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+request.shouldReportPartialResults = true
 
 var transcript   = ""
 var isDone       = false
 var silenceTimer: Timer?
+var heardSpeech  = false
 
 func finish() {
     guard !isDone else { return }
@@ -52,6 +55,7 @@ func finish() {
 
 let task = recognizer.recognitionTask(with: request) { result, error in
     if let result = result {
+        heardSpeech = true
         transcript = result.bestTranscription.formattedString
         silenceTimer?.invalidate()
         if result.isFinal {
@@ -79,7 +83,10 @@ do {
 }
 
 // Fire immediately if no speech in first SILENCE_TIMEOUT seconds
-silenceTimer = Timer.scheduledTimer(withTimeInterval: SILENCE_TIMEOUT, repeats: false) { _ in
+let firstSpeechTimer = Timer.scheduledTimer(withTimeInterval: INITIAL_SPEECH_TIMEOUT, repeats: false) { _ in
+    if !heardSpeech {
+        fputs("imdone-listen: no speech detected within \(INITIAL_SPEECH_TIMEOUT)s window\n", stderr)
+    }
     finish()
 }
 
@@ -93,11 +100,15 @@ while !isDone {
 }
 
 maxTimer.invalidate()
+firstSpeechTimer.invalidate()
 task.cancel()
 
 if !transcript.isEmpty {
     print(transcript)
     exit(0)
 } else {
+    if !heardSpeech {
+        fputs("imdone-listen: no speech detected\n", stderr)
+    }
     exit(1)
 }

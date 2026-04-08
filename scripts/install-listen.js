@@ -10,8 +10,33 @@ if (process.platform !== 'darwin') process.exit(0)
 
 const pkg = require('../package.json')
 const version = `v${pkg.version}`
-const repo = pkg.repository
-const url = `https://github.com/${repo}/releases/download/${version}/imdone-listen-darwin`
+function getRepoSlug(repositoryField) {
+  if (!repositoryField) return null
+
+  if (typeof repositoryField === 'string') {
+    return repositoryField
+      .replace(/^git\+/, '')
+      .replace(/^https?:\/\/github\.com\//, '')
+      .replace(/\.git$/, '')
+  }
+
+  if (typeof repositoryField === 'object' && typeof repositoryField.url === 'string') {
+    return repositoryField.url
+      .replace(/^git\+/, '')
+      .replace(/^https?:\/\/github\.com\//, '')
+      .replace(/\.git$/, '')
+  }
+
+  return null
+}
+
+const repoSlug = getRepoSlug(pkg.repository)
+if (!repoSlug) {
+  console.warn('[imdone] Could not resolve repository slug from package.json')
+  process.exit(0)
+}
+
+const url = `https://github.com/${repoSlug}/releases/download/${version}/imdone-listen-darwin`
 const outPath = path.join(__dirname, '..', 'bin', 'imdone-listen')
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true })
