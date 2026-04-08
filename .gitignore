@@ -2,3 +2,10 @@ node_modules/
 *.tmp
 .DS_Store
 bin/
+
+# Internal planning docs — not for public repo
+CLAUDE.md
+DESIGN.md
+PRD.md
+TODOS.md
+WORKFLOW.md
