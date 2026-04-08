@@ -102,19 +102,23 @@ function speak(eventName) {
 
     const proc = spawnFn('say', ['-v', voice, phrase], { stdio: 'ignore' })
     ttsProc = proc
+    let done = false
+
+    function finish() {
+      if (done) return
+      done = true
+      clearTimeout(timeout)
+      ttsProc = null
+      resolve()
+    }
 
     const timeout = setTimeout(() => {
       console.error('\n[imdone] say timed out — skipping')
       proc.kill()
-      ttsProc = null
-      resolve()
+      finish()
     }, TTS_TIMEOUT_MS)
 
-    proc.on('exit', () => {
-      clearTimeout(timeout)
-      ttsProc = null
-      resolve()
-    })
+    proc.on('exit', finish)
   })
 }
 
@@ -252,10 +256,11 @@ function spawnClaude(args) {
   ptyChild = ptyProcess
   ptyProcess.on('data', (data) => process.stdout.write(data))
 
+  const onStdinData = (data) => ptyProcess.write(data)
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true)
     process.stdin.resume()
-    process.stdin.on('data', (data) => ptyProcess.write(data))
+    process.stdin.on('data', onStdinData)
   }
 
   const onResize = () => ptyProcess.resize(process.stdout.columns, process.stdout.rows)
@@ -264,7 +269,10 @@ function spawnClaude(args) {
   ptyProcess.on('exit', (code) => {
     ptyChild = null
     process.stdout.off('resize', onResize)
-    if (process.stdin.isTTY) process.stdin.setRawMode(false)
+    if (process.stdin.isTTY) {
+      process.stdin.off('data', onStdinData)
+      process.stdin.setRawMode(false)
+    }
     process.exit(code ?? 0)
   })
 
@@ -290,15 +298,18 @@ async function runDiagnose() {
     check('.claude/settings.json hook URL', !!(url && url.includes('/event')), 'Run `imdone` once to auto-configure')
   } catch { check('.claude/settings.json', false, 'Run `imdone` once to auto-configure') }
 
-  try { JSON.parse(fs.readFileSync(PHRASES_PATH, 'utf8')); check('phrases.json valid', true) }
-  catch (e) { check('phrases.json', false, e.code === 'ENOENT' ? 'Run `imdone` once to create defaults' : 'Fix JSON syntax error') }
+  try {
+    const raw = fs.readFileSync(PHRASES_PATH, 'utf8')
+    try { JSON.parse(raw); check('phrases.json valid', true) }
+    catch { check('phrases.json', false, 'Fix JSON syntax error') }
+  } catch (e) { check('phrases.json', false, e.code === 'ENOENT' ? 'Run `imdone` once to create defaults' : e.message) }
 
   check('imdone-listen binary', fs.existsSync(LISTEN_BINARY), 'Reinstall imdone-mf')
 
   const portFree = await new Promise((resolve) => {
     const srv = http.createServer()
     srv.on('error', () => resolve(false))
-    srv.listen(PORT, '127.0.0.1', () => { srv.close(); resolve(true) })
+    srv.listen(PORT, '127.0.0.1', () => srv.close(() => resolve(true)))
   })
   check(`Port ${PORT} available`, portFree, 'Another imdone may be running')
 
