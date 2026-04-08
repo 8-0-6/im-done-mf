@@ -50,6 +50,11 @@ Last updated: 2026-04-08 (Sprint 5 complete: imdone-listen Swift CLI, universal 
   - imdone-listen binary present
   - Port 51234 available
 
+- [x] **Piper TTS opt-in** — `imdone --setup-piper` downloads binary + en_US-lessac-high model (2026-04-08)
+  - Falls back to `say` if piper not installed (zero cost to normal users)
+  - Piper binary + model stored in `~/.imdone/piper/` and `~/.imdone/`
+  - `--diagnose` shows piper status as optional check
+
 ---
 
 ## v0.1 — After v0 ships

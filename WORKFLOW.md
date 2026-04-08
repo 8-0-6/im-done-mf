@@ -85,5 +85,6 @@ Every 3 sprints:
 | 5 | imdone-listen Swift CLI + GitHub Actions | DONE |
 | 6 | PTY injection full loop (STT → inject) | DONE |
 | 7 | --diagnose command | DONE |
+| 8 | Piper TTS opt-in (--setup-piper) | DONE |
 
 Update status here as sprints complete.
