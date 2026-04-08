@@ -14,9 +14,11 @@ const PORT = parseInt(process.env.IMDONE_PORT || '51234', 10)
 const IMDONE_DIR = path.join(os.homedir(), '.imdone')
 const PHRASES_PATH = path.join(IMDONE_DIR, 'phrases.json')
 const DEFAULT_PHRASES = require('./phrases.json')
+const LISTEN_BINARY = path.join(__dirname, '..', 'bin', 'imdone-listen')
 
 const DEBOUNCE_MS = 500
 const TTS_TIMEOUT_MS = 30_000
+const STT_TIMEOUT_MS = 35_000
 const QUEUE_MAX = 5
 const PRIORITY = { Notification: 0, Stop: 1 }
 
@@ -116,6 +118,49 @@ function speak(eventName) {
   })
 }
 
+// --- STT + PTY injection ---
+let ptyChild = null
+
+function listenAndInject() {
+  if (!ptyChild) return Promise.resolve()
+
+  if (!fs.existsSync(LISTEN_BINARY)) {
+    process.stdout.write('\n[imdone] imdone-listen not found — voice input disabled. Run `imdone --diagnose`.\n')
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve) => {
+    const proc = spawnFn(LISTEN_BINARY, [], { stdio: ['ignore', 'pipe', 'inherit'] })
+    let transcript = ''
+    let done = false
+
+    function finish(heard) {
+      if (done) return
+      done = true
+      clearTimeout(timeout)
+      if (heard) {
+        process.stdout.write(`\n[imdone] I heard: ${heard}\n`)
+        ptyChild.write(heard + '\r')
+      } else {
+        process.stdout.write('\n[imdone] No speech detected. Continuing.\n')
+      }
+      resolve()
+    }
+
+    const timeout = setTimeout(() => { proc.kill(); finish(null) }, STT_TIMEOUT_MS)
+
+    proc.stdout.on('data', (chunk) => {
+      transcript += chunk
+      if (transcript.length > 10_000) transcript = transcript.slice(-5_000)
+    })
+
+    proc.on('exit', (code) => {
+      const heard = transcript.trim()
+      finish(code === 0 && heard ? heard : null)
+    })
+  })
+}
+
 // --- Event queue ---
 const queue = []
 const lastEventTime = {}
@@ -149,7 +194,10 @@ async function processQueue() {
   isProcessing = true
   while (queue.length > 0) {
     const event = queue.shift()
-    try { await speak(event.hook_event_name) }
+    try {
+      await speak(event.hook_event_name)
+      if (event.hook_event_name === 'Stop') await listenAndInject()
+    }
     catch (e) { console.error('[imdone] speak error:', e.message) }
   }
   isProcessing = false
@@ -201,6 +249,7 @@ function spawnClaude(args) {
     env: process.env,
   })
 
+  ptyChild = ptyProcess
   ptyProcess.on('data', (data) => process.stdout.write(data))
 
   if (process.stdin.isTTY) {
@@ -213,6 +262,7 @@ function spawnClaude(args) {
   process.stdout.on('resize', onResize)
 
   ptyProcess.on('exit', (code) => {
+    ptyChild = null
     process.stdout.off('resize', onResize)
     if (process.stdin.isTTY) process.stdin.setRawMode(false)
     process.exit(code ?? 0)
@@ -221,11 +271,52 @@ function spawnClaude(args) {
   return ptyProcess
 }
 
+// --- Diagnose ---
+async function runDiagnose() {
+  const checks = []
+
+  const check = (name, ok, fix = null) => checks.push({ name, ok, fix })
+
+  try { execFileSync('which', ['say'], { stdio: 'ignore' }); check('`say` command on PATH', true) }
+  catch { check('`say` command on PATH', false, 'macOS 12+ required') }
+
+  try { execFileSync('which', ['claude'], { stdio: 'ignore' }); check('`claude` on PATH', true) }
+  catch { check('`claude` on PATH', false, 'Install Claude Code first') }
+
+  const settingsPath = path.join(process.cwd(), '.claude', 'settings.json')
+  try {
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+    const url = s?.hooks?.Stop?.[0]?.hooks?.[0]?.url
+    check('.claude/settings.json hook URL', !!(url && url.includes('/event')), 'Run `imdone` once to auto-configure')
+  } catch { check('.claude/settings.json', false, 'Run `imdone` once to auto-configure') }
+
+  try { JSON.parse(fs.readFileSync(PHRASES_PATH, 'utf8')); check('phrases.json valid', true) }
+  catch (e) { check('phrases.json', false, e.code === 'ENOENT' ? 'Run `imdone` once to create defaults' : 'Fix JSON syntax error') }
+
+  check('imdone-listen binary', fs.existsSync(LISTEN_BINARY), 'Reinstall imdone-mf')
+
+  const portFree = await new Promise((resolve) => {
+    const srv = http.createServer()
+    srv.on('error', () => resolve(false))
+    srv.listen(PORT, '127.0.0.1', () => { srv.close(); resolve(true) })
+  })
+  check(`Port ${PORT} available`, portFree, 'Another imdone may be running')
+
+  const pass = checks.filter(c => c.ok).length
+  console.log('\nimdone --diagnose')
+  for (const c of checks) console.log(`  ${c.ok ? '✓' : '✗'} ${c.name}${c.ok ? '' : `  →  ${c.fix}`}`)
+  console.log(`\n${pass}/${checks.length} checks passed`)
+  process.exit(pass === checks.length ? 0 : 1)
+}
+
 // --- Main ---
 function main() {
+  const args = process.argv.slice(2)
+  if (args.includes('--diagnose')) { runDiagnose(); return }
+
   runStartupChecks()
   startServer()
-  spawnClaude(process.argv.slice(2))
+  spawnClaude(args)
 }
 
 if (require.main === module) {
@@ -234,9 +325,11 @@ if (require.main === module) {
   // Test-only seams — not part of the public API
   function _setSpawnFn(fn) { spawnFn = fn }
   function _resetProcessing() { isProcessing = false }
+  function _setPtyChild(child) { ptyChild = child }
 
   module.exports = {
     enqueue, processQueue, speak, syncHooks, loadPhrases, startServer, randomFrom,
-    _queue: queue, _lastEventTime: lastEventTime, _setSpawnFn, _resetProcessing,
+    listenAndInject,
+    _queue: queue, _lastEventTime: lastEventTime, _setSpawnFn, _resetProcessing, _setPtyChild,
   }
 }

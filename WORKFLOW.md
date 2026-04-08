@@ -82,8 +82,8 @@ Every 3 sprints:
 | 2 | TTS on Stop — HTTP server + node-pty + say | todo |
 | 3 | Hook setup + phrases.json | todo |
 | 4 | Tests (17 unit tests) | todo |
-| 5 | imdone-listen Swift CLI + GitHub Actions | todo — next |
-| 6 | PTY injection full loop (STT → inject) | todo |
-| 7 | --diagnose command | todo |
+| 5 | imdone-listen Swift CLI + GitHub Actions | DONE |
+| 6 | PTY injection full loop (STT → inject) | DONE |
+| 7 | --diagnose command | DONE |
 
 Update status here as sprints complete.

@@ -18,7 +18,8 @@ vi.mock('node-pty', () => ({
 // ─── Import module once ───────────────────────────────────────────────────────
 const {
   randomFrom, enqueue, speak, syncHooks, loadPhrases, startServer,
-  _queue, _lastEventTime, _setSpawnFn, _resetProcessing,
+  listenAndInject,
+  _queue, _lastEventTime, _setSpawnFn, _resetProcessing, _setPtyChild,
 } = await import('../src/index.js')
 
 // ─── Shared mock spawn factory ────────────────────────────────────────────────
@@ -234,5 +235,53 @@ describe('syncHooks', () => {
 describe('loadPhrases', () => {
   it('does not throw when called with an existing valid phrases.json', () => {
     expect(() => loadPhrases()).not.toThrow()
+  })
+})
+
+// ─── listenAndInject ─────────────────────────────────────────────────────────
+
+describe('listenAndInject', () => {
+  let mockWrite
+
+  beforeEach(() => {
+    mockWrite = vi.fn()
+    _setPtyChild({ write: mockWrite })
+  })
+
+  afterEach(() => {
+    _setPtyChild(null)
+  })
+
+  it('injects transcript + \\r into ptyChild when imdone-listen exits 0 with output', async () => {
+    const fakeProc = { stdout: { on: vi.fn() }, on: vi.fn(), kill: vi.fn() }
+    fakeProc.stdout.on.mockImplementation((event, cb) => {
+      if (event === 'data') setImmediate(() => cb('ship it'))
+    })
+    fakeProc.on.mockImplementation((event, cb) => {
+      if (event === 'exit') setImmediate(() => cb(0))
+    })
+    _setSpawnFn(vi.fn().mockReturnValue(fakeProc))
+
+    await listenAndInject()
+
+    expect(mockWrite).toHaveBeenCalledWith('ship it\r')
+  })
+
+  it('does not inject when imdone-listen exits 1 (no speech)', async () => {
+    const fakeProc = { stdout: { on: vi.fn() }, on: vi.fn(), kill: vi.fn() }
+    fakeProc.on.mockImplementation((event, cb) => {
+      if (event === 'exit') setImmediate(() => cb(1))
+    })
+    _setSpawnFn(vi.fn().mockReturnValue(fakeProc))
+
+    await listenAndInject()
+
+    expect(mockWrite).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when ptyChild is null', async () => {
+    _setPtyChild(null)
+    _setSpawnFn(vi.fn())
+    await expect(listenAndInject()).resolves.toBeUndefined()
   })
 })
