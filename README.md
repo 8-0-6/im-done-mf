@@ -11,7 +11,7 @@ imdone
 
 ## What it does
 
-You run `imdone` instead of `claude`. It wraps Claude Code and listens for lifecycle events via Claude Code's native HTTP hooks. When something needs your attention — task done, approval needed, notification — it speaks out loud. When Claude finishes talking, it listens for your voice and injects what you said directly into Claude Code. No keyboard required.
+You run `imdone` instead of `claude`. It wraps Claude Code and listens for lifecycle events via Claude Code's native HTTP hooks. Today it reacts to **Stop** and **Notification** hooks: it speaks, then (on Stop) listens and injects what you said into Claude Code. No paste required.
 
 **macOS only. Requires Claude Code.**
 
@@ -55,10 +55,11 @@ imdone starts:
   2. Claude Code via PTY (your terminal works exactly as normal)
 
 When Claude Code fires a Stop or Notification hook:
-  → imdone speaks the event out loud via macOS `say`
-  → activates mic (SFSpeechRecognizer, fully offline)
-  → prints "I heard: [transcript]"
-  → injects your response directly into Claude Code — no paste needed
+  → imdone speaks the phrase out loud via macOS `say`
+On Stop only (after TTS):
+  → mic opens (SFSpeechRecognizer, on-device)
+  → prints "I heard: [transcript]" and injects it into Claude Code (`\r` = Enter)
+Notifications do not run the listen/inject step.
 ```
 
 All audio is local. No API calls, no network, no cloud.
@@ -83,18 +84,6 @@ Edit `~/.imdone/phrases.json` (created on first run):
 ```
 
 Any `say`-compatible voice name works. Run `say -v ?` to list installed voices.
-
----
-
-## Upgrade STT accuracy
-
-The default STT (SFSpeechRecognizer) is great for short commands. For technical instructions like "fix the auth bug in users.ts", install whisper.cpp:
-
-```bash
-imdone --setup-whisper
-```
-
-Downloads the base model (~74MB) and compiles with Metal acceleration. Runs fully offline.
 
 ---
 
