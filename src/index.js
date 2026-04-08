@@ -21,6 +21,8 @@ const TTS_TIMEOUT_MS = 30_000
 const STT_TIMEOUT_MS = 35_000
 const QUEUE_MAX = 5
 const PRIORITY = { Notification: 0, Stop: 1 }
+const LOG = '[imdone]'
+const DEFAULT_VOICE = 'Rocko (English (US))'
 
 // --- Helpers ---
 function die(msg) {
@@ -95,7 +97,7 @@ let ttsProc = null
 function speak(eventName) {
   const pool = phrases[eventName] || phrases['Stop']
   const phrase = randomFrom(Array.isArray(pool) ? pool : [pool])
-  const voice = phrases.voice || 'Ava'
+  const voice = phrases.voice || DEFAULT_VOICE
 
   return new Promise((resolve) => {
     if (ttsProc) { ttsProc.kill(); ttsProc = null }
@@ -113,7 +115,7 @@ function speak(eventName) {
     }
 
     const timeout = setTimeout(() => {
-      console.error('\n[imdone] say timed out — skipping')
+      console.error(`\n${LOG} say timed out — skipping`)
       proc.kill()
       finish()
     }, TTS_TIMEOUT_MS)
@@ -129,7 +131,7 @@ function listenAndInject() {
   if (!ptyChild) return Promise.resolve()
 
   if (!fs.existsSync(LISTEN_BINARY)) {
-    process.stdout.write('\n[imdone] imdone-listen not found — voice input disabled. Run `imdone --diagnose`.\n')
+    process.stdout.write(`\n${LOG} imdone-listen not found — voice input disabled. Run \`imdone --diagnose\`.\n`)
     return Promise.resolve()
   }
 
@@ -143,10 +145,10 @@ function listenAndInject() {
       done = true
       clearTimeout(timeout)
       if (heard) {
-        process.stdout.write(`\n[imdone] I heard: ${heard}\n`)
+        process.stdout.write(`\n${LOG} I heard: ${heard}\n`)
         ptyChild.write(heard + '\r')
       } else {
-        process.stdout.write('\n[imdone] No speech detected. Continuing.\n')
+        process.stdout.write(`\n${LOG} No speech detected. Continuing.\n`)
       }
       resolve()
     }
@@ -187,7 +189,7 @@ function enqueue(event) {
 
   if (queue.length > QUEUE_MAX) {
     const dropped = queue.shift()
-    console.error(`[imdone] queue full — dropped ${dropped.hook_event_name} event`)
+    console.error(`${LOG} queue full — dropped ${dropped.hook_event_name} event`)
   }
 
   processQueue()
@@ -202,7 +204,7 @@ async function processQueue() {
       await speak(event.hook_event_name)
       if (event.hook_event_name === 'Stop') await listenAndInject()
     }
-    catch (e) { console.error('[imdone] speak error:', e.message) }
+    catch (e) { console.error(`${LOG} speak error:`, e.message) }
   }
   isProcessing = false
 }
@@ -211,7 +213,10 @@ async function processQueue() {
 function startServer() {
   const server = http.createServer((req, res) => {
     let body = ''
-    req.on('data', chunk => { body += chunk })
+    req.on('data', chunk => {
+      body += chunk
+      if (body.length > 102_400) { req.destroy(); return }
+    })
     req.on('end', () => {
       // Claude Code requires JSON response — plain text causes "JSON validation failed" in UI
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -220,7 +225,7 @@ function startServer() {
       let event
       try { event = JSON.parse(body) }
       catch {
-        console.error('[imdone] malformed hook POST:', body.slice(0, 200))
+        console.error(`${LOG} malformed hook POST:`, body.slice(0, 200))
         return
       }
 
