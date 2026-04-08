@@ -5,7 +5,7 @@
   "bin": {
     "imdone": "./src/index.js"
   },
-  "repository": "8-0-6/imdone-mf",
+  "repository": "8-0-6/im-done-mf",
   "scripts": {
     "postinstall": "node scripts/postinstall.js && node scripts/install-listen.js",
     "start": "node src/index.js",
