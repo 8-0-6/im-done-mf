@@ -15,9 +15,6 @@ const IMDONE_DIR = path.join(os.homedir(), '.imdone')
 const PHRASES_PATH = path.join(IMDONE_DIR, 'phrases.json')
 const DEFAULT_PHRASES = require('./phrases.json')
 const LISTEN_BINARY = path.join(__dirname, '..', 'bin', 'imdone-listen')
-const PIPER_DIR = path.join(IMDONE_DIR, 'piper')
-const PIPER_BINARY = path.join(PIPER_DIR, 'piper')
-const PIPER_MODEL = path.join(IMDONE_DIR, 'en_US-lessac-high.onnx')
 
 const DEBOUNCE_MS = 500
 const TTS_TIMEOUT_MS = 30_000
@@ -98,54 +95,30 @@ let ttsProc = null
 function speak(eventName) {
   const pool = phrases[eventName] || phrases['Stop']
   const phrase = randomFrom(Array.isArray(pool) ? pool : [pool])
-  const voice = phrases.voice || 'Rocko (English (US))'
-  const usePiper = fs.existsSync(PIPER_BINARY) && fs.existsSync(PIPER_MODEL)
+  const voice = phrases.voice || 'Ava'
 
   return new Promise((resolve) => {
     if (ttsProc) { ttsProc.kill(); ttsProc = null }
 
+    const proc = spawnFn('say', ['-v', voice, phrase], { stdio: 'ignore' })
+    ttsProc = proc
     let done = false
-    let killCurrent = null
-
-    // Proxy so preemption works regardless of which stage (piper vs afplay) is active
-    ttsProc = { kill: () => { if (killCurrent) killCurrent() } }
 
     function finish() {
       if (done) return
       done = true
       clearTimeout(timeout)
-      if (killCurrent) killCurrent()
       ttsProc = null
       resolve()
     }
 
     const timeout = setTimeout(() => {
-      console.error('\n[imdone] tts timed out — skipping')
+      console.error('\n[imdone] say timed out — skipping')
+      proc.kill()
       finish()
     }, TTS_TIMEOUT_MS)
 
-    if (usePiper) {
-      const tmpWav = path.join(os.tmpdir(), `imdone-${process.pid}.wav`)
-      const piper = spawnFn(PIPER_BINARY, ['--model', PIPER_MODEL, '--output-file', tmpWav], {
-        stdio: ['pipe', 'ignore', 'ignore'],
-        env: { ...process.env, DYLD_LIBRARY_PATH: PIPER_DIR },
-      })
-      killCurrent = () => { piper.kill(); try { fs.unlinkSync(tmpWav) } catch {} }
-      piper.stdin.write(phrase)
-      piper.stdin.end()
-
-      piper.on('exit', (code) => {
-        if (done) return
-        if (code !== 0) { finish(); return }
-        const afplay = spawnFn('afplay', [tmpWav], { stdio: 'ignore' })
-        killCurrent = () => { afplay.kill(); try { fs.unlinkSync(tmpWav) } catch {} }
-        afplay.on('exit', () => { try { fs.unlinkSync(tmpWav) } catch {}; finish() })
-      })
-    } else {
-      const proc = spawnFn('say', ['-v', voice, phrase], { stdio: 'ignore' })
-      killCurrent = () => proc.kill()
-      proc.on('exit', finish)
-    }
+    proc.on('exit', finish)
   })
 }
 
@@ -332,7 +305,6 @@ async function runDiagnose() {
   } catch (e) { check('phrases.json', false, e.code === 'ENOENT' ? 'Run `imdone` once to create defaults' : e.message) }
 
   check('imdone-listen binary', fs.existsSync(LISTEN_BINARY), 'Reinstall imdone-mf')
-  check('Piper TTS', fs.existsSync(PIPER_BINARY) && fs.existsSync(PIPER_MODEL), 'Run `imdone --setup-piper` for better voice quality (optional)')
 
   const portFree = await new Promise((resolve) => {
     const srv = http.createServer()
@@ -352,7 +324,6 @@ async function runDiagnose() {
 function main() {
   const args = process.argv.slice(2)
   if (args.includes('--diagnose')) { runDiagnose(); return }
-  if (args.includes('--setup-piper')) { require('../scripts/setup-piper.js'); return }
 
   runStartupChecks()
   startServer()
