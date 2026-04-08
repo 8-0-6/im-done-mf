@@ -24,6 +24,23 @@ const PRIORITY = { Notification: 0, Stop: 1 }
 const LOG = '[imdone]'
 const DEFAULT_VOICE = 'Rocko (English (US))'
 
+function normalizeHookType(event) {
+  const raw = event && (
+    event.hook_event_name ||
+    event.hookEventName ||
+    event.event_name ||
+    event.eventName ||
+    event.type
+  )
+  if (typeof raw !== 'string') return null
+
+  const s = raw.trim().toLowerCase()
+  if (!s) return null
+  if (s === 'stop' || s.includes('stop')) return 'Stop'
+  if (s === 'notification' || s.includes('notification')) return 'Notification'
+  return null
+}
+
 // --- Helpers ---
 function die(msg) {
   console.error(`\nimdone: ${msg}\n`)
@@ -229,10 +246,14 @@ function startServer() {
         return
       }
 
-      const type = event.hook_event_name
-      if (!(type in PRIORITY)) return
+      const type = normalizeHookType(event)
+      if (!type) {
+        const raw = event.hook_event_name || event.hookEventName || event.event_name || event.eventName || event.type
+        console.error(`${LOG} skipping unsupported hook event: ${String(raw || 'unknown')}`)
+        return
+      }
 
-      enqueue(event)
+      enqueue(Object.assign({}, event, { hook_event_name: type }))
     })
   })
 
