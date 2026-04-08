@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Downloads the correct imdone-listen binary for the current platform/arch.
+// Downloads the imdone-listen universal binary (arm64 + x86_64).
 // Non-fatal — imdone still works without it (TTS fires, STT is skipped).
 
 const https = require('https')
@@ -10,10 +10,8 @@ if (process.platform !== 'darwin') process.exit(0)
 
 const pkg = require('../package.json')
 const version = `v${pkg.version}`
-const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
 const repo = pkg.repository
-const asset = `imdone-listen-darwin-${arch}`
-const url = `https://github.com/${repo}/releases/download/${version}/${asset}`
+const url = `https://github.com/${repo}/releases/download/${version}/imdone-listen-darwin`
 const outPath = path.join(__dirname, '..', 'bin', 'imdone-listen')
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true })
@@ -42,7 +40,7 @@ function download(url, dest, hops = 5) {
 download(url, outPath)
   .then(() => {
     fs.chmodSync(outPath, 0o755)
-    console.log(`[imdone] imdone-listen ready (darwin-${arch})`)
+    console.log('[imdone] imdone-listen ready (universal)')
   })
   .catch(err => {
     console.warn(`[imdone] Could not download imdone-listen: ${err.message}`)

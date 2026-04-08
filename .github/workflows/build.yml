@@ -10,31 +10,29 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - os: macos-14
-            arch: arm64
-          - os: macos-13
-            arch: x64
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
+      - name: Build arm64 + x86_64
         run: |
           swiftc imdone-listen/main.swift \
-            -o imdone-listen-darwin-${{ matrix.arch }} \
-            -framework AVFoundation \
-            -framework Speech \
-            -framework Foundation \
-            -O
+            -target arm64-apple-macos12 \
+            -o imdone-listen-arm64 \
+            -framework AVFoundation -framework Speech -framework Foundation -O
+
+          swiftc imdone-listen/main.swift \
+            -target x86_64-apple-macos12 \
+            -o imdone-listen-x86_64 \
+            -framework AVFoundation -framework Speech -framework Foundation -O
+
+          lipo -create -output imdone-listen-darwin imdone-listen-arm64 imdone-listen-x86_64
 
       - name: Ad-hoc sign
-        run: codesign -s - imdone-listen-darwin-${{ matrix.arch }}
+        run: codesign -s - imdone-listen-darwin
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: imdone-listen-darwin-${{ matrix.arch }}
+          files: imdone-listen-darwin
