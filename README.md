@@ -55,14 +55,17 @@ imdone starts:
   2. Claude Code via PTY (your terminal works exactly as normal)
 
 When Claude Code fires a Stop or Notification hook:
-  → imdone speaks the phrase out loud via macOS `say`
+  → imdone speaks the phrase out loud (three-tier TTS, see below)
 On Stop only (after TTS):
   → mic opens (SFSpeechRecognizer, on-device)
   → prints "I heard: [transcript]" and injects it into Claude Code (`\r` = Enter)
 Notifications do not run the listen/inject step.
 ```
 
-All audio is local. No API calls, no network, no cloud.
+**TTS priority order:**
+1. **Local audio file** — any `.mp3`/`.wav`/`.aiff`/`.m4a` in `~/.imdone/audio/stop/` or `~/.imdone/audio/notification/`
+2. **ElevenLabs** — if `ELEVENLABS_API_KEY` is set in your environment
+3. **macOS `say`** — always-available fallback, zero config
 
 ---
 
@@ -72,9 +75,8 @@ Edit `~/.imdone/phrases.json` (created on first run):
 
 ```json
 {
-  "voice": "Rocko (English (US))",
   "Stop": [
-    "yo your shit's done mf",
+    "yo your shit's done motherfucker",
     "aye, task complete, what's next"
   ],
   "Notification": [
@@ -83,7 +85,24 @@ Edit `~/.imdone/phrases.json` (created on first run):
 }
 ```
 
-Any `say`-compatible voice name works. Run `say -v ?` to list installed voices.
+To use a specific `say` voice, add a `"voice"` field with any `say`-compatible name. Run `say -v ?` to list installed voices.
+
+---
+
+## Custom audio files
+
+Drop your own clips into `~/.imdone/audio/` and they take priority over everything else:
+
+```
+~/.imdone/audio/
+  stop/          ← played on Claude Code Stop events
+    clip1.mp3
+    clip2.mp3
+  notification/  ← played on Notification events
+    clip1.mp3
+```
+
+Supported formats: `.mp3`, `.wav`, `.aiff`, `.m4a`. A random clip is picked each time. If the folder is empty or missing, imdone falls through to ElevenLabs or `say`.
 
 ---
 
@@ -93,9 +112,10 @@ Any `say`-compatible voice name works. Run `say -v ?` to list installed voices.
 imdone --diagnose
 ```
 
-Checks: `say` on PATH, `claude` on PATH, `.claude/settings.json` hook URL, `phrases.json` valid, `imdone-listen` binary present, port 51234 available.
+Checks: `claude` on PATH, `say` on PATH, `afplay` on PATH, local audio files (optional), ElevenLabs API key (optional), `.claude/settings.json` hook URL, `phrases.json` valid, `imdone-listen` binary present, port 51234 available.
 
 **Port conflict:**
+
 ```bash
 IMDONE_PORT=51235 imdone
 ```

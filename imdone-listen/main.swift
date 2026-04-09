@@ -10,23 +10,41 @@ let MAX_DURATION: TimeInterval           = 30.0
 
 // ── Speech auth ───────────────────────────────────────────────────────────────
 
-func awaitSpeechAuth() -> Bool {
+func checkSpeechAuth() -> Bool {
+    // Fast path: already decided — no dialog, no blocking.
+    let current = SFSpeechRecognizer.authorizationStatus()
+    if current == .authorized { return true }
+    if current == .denied || current == .restricted {
+        fputs("imdone-listen: speech recognition not authorized. Grant access in System Settings → Privacy & Security → Speech Recognition.\n", stderr)
+        return false
+    }
+
+    // Status is .notDetermined — need to request. The callback lands on the
+    // main queue, so spin the RunLoop to process it. Cap at 10 s in case
+    // the dialog never appears (subprocess context, display unavailable, etc.).
     var authorized = false
     var done = false
     SFSpeechRecognizer.requestAuthorization { status in
         authorized = status == .authorized
         done = true
     }
-    while !done { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+    let deadline = Date().addingTimeInterval(10.0)
+    while !done && Date() < deadline {
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+    }
+    if !done {
+        fputs("imdone-listen: speech recognition dialog timed out. Open System Settings → Privacy & Security → Speech Recognition and grant access to your terminal.\n", stderr)
+        return false
+    }
+    if !authorized {
+        fputs("imdone-listen: speech recognition denied. Grant access in System Settings → Privacy & Security → Speech Recognition.\n", stderr)
+    }
     return authorized
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-guard awaitSpeechAuth() else {
-    fputs("imdone-listen: speech recognition not authorized. Grant access in System Settings → Privacy & Security → Speech Recognition.\n", stderr)
-    exit(1)
-}
+guard checkSpeechAuth() else { exit(1) }
 
 guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
       recognizer.isAvailable else {
@@ -66,7 +84,22 @@ let task = recognizer.recognitionTask(with: request) { result, error in
             }
         }
     }
-    if error != nil { finish() }
+    if let error = error {
+        let nsErr = error as NSError
+        switch nsErr.code {
+        case 301:
+            // "No speech detected" — normal end-of-session signal.
+            finish()
+        case 1110:
+            // Transient "Retry" from the recognizer (audio session hiccup).
+            // If we already have speech, commit it. If not, keep the window
+            // open and let firstSpeechTimer decide — don't exit early.
+            if heardSpeech { finish() }
+        default:
+            fputs("imdone-listen: recognition error \(nsErr.code): \(nsErr.localizedDescription)\n", stderr)
+            finish()
+        }
+    }
 }
 
 let inputNode = engine.inputNode
@@ -79,10 +112,13 @@ do {
     try engine.start()
 } catch {
     fputs("imdone-listen: audio engine failed: \(error.localizedDescription)\n", stderr)
+    fputs("imdone-listen: tip — check System Settings → Privacy & Security → Microphone and ensure your terminal has access.\n", stderr)
     exit(1)
 }
 
-// Fire immediately if no speech in first SILENCE_TIMEOUT seconds
+fputs("imdone-listen: listening...\n", stderr)
+
+// Exit if no speech starts within the initial window
 let firstSpeechTimer = Timer.scheduledTimer(withTimeInterval: INITIAL_SPEECH_TIMEOUT, repeats: false) { _ in
     if !heardSpeech {
         fputs("imdone-listen: no speech detected within \(INITIAL_SPEECH_TIMEOUT)s window\n", stderr)

@@ -19,16 +19,25 @@ vi.mock('node-pty', () => ({
 const {
   randomFrom, enqueue, speak, syncHooks, loadPhrases, startServer,
   listenAndInject,
-  _queue, _lastEventTime, _setSpawnFn, _resetProcessing, _setPtyChild,
+  _queue, _lastEventTime, _setSpawnFn, _setFetch, _resetProcessing, _setPtyChild,
 } = await import('../src/index.js')
 
-// ─── Shared mock spawn factory ────────────────────────────────────────────────
-function makeSayProc(hang = false) {
+// ─── Shared mock factories ────────────────────────────────────────────────────
+function makeAfplayProc(hang = false) {
   const proc = { kill: vi.fn(), on: vi.fn() }
   proc.on.mockImplementation((event, cb) => {
     if (event === 'exit' && !hang) setImmediate(() => cb(0))
   })
   return proc
+}
+
+function makeFetch(ok = true, status = 200) {
+  return vi.fn().mockResolvedValue({
+    ok,
+    status,
+    arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
+    text: vi.fn().mockResolvedValue('error body'),
+  })
 }
 
 function post(port, raw) {
@@ -76,7 +85,7 @@ describe('enqueue', () => {
 
   beforeEach(() => {
     mockSpawn = vi.fn()
-    mockSpawn.mockReturnValue(makeSayProc(true /* hang — keeps queue intact */))
+    mockSpawn.mockReturnValue(makeAfplayProc(true /* hang — keeps queue intact */))
     _setSpawnFn(mockSpawn)
     _resetProcessing()
     resetQueue()
@@ -117,34 +126,62 @@ describe('enqueue', () => {
 
 describe('speak', () => {
   let mockSpawn
+  let tmpDir
 
   beforeEach(() => {
     mockSpawn = vi.fn()
     _setSpawnFn(mockSpawn)
+    delete process.env.ELEVENLABS_API_KEY
+    // Isolate local audio dir to an empty tmp dir so no real files leak in
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'imdone-speak-'))
   })
 
-  it('calls say with -v and a phrase for Stop', async () => {
-    mockSpawn.mockReturnValue(makeSayProc())
+  afterEach(() => {
+    delete process.env.ELEVENLABS_API_KEY
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  // Tier 3: say fallback (no local files, no API key)
+  it('falls back to say when no local files and no API key', async () => {
+    mockSpawn.mockReturnValue(makeAfplayProc())
     await speak('Stop')
     expect(mockSpawn).toHaveBeenCalledWith('say', expect.arrayContaining(['-v']), expect.any(Object))
   })
 
-  it('falls back to Stop phrases for unknown event names', async () => {
-    mockSpawn.mockReturnValue(makeSayProc())
+  it('falls back to Stop phrases for unknown event names via say', async () => {
+    mockSpawn.mockReturnValue(makeAfplayProc())
     await expect(speak('UnknownEvent')).resolves.toBeUndefined()
-    expect(mockSpawn).toHaveBeenCalled()
+    expect(mockSpawn).toHaveBeenCalledWith('say', expect.any(Array), expect.any(Object))
   })
 
-  it('kills the previous say process when a new speak starts', async () => {
-    const proc1 = makeSayProc(true /* hang */)
-    const proc2 = makeSayProc()
+  // Tier 2: ElevenLabs (API key set, no local files)
+  it('uses ElevenLabs when API key is set and no local files', async () => {
+    process.env.ELEVENLABS_API_KEY = 'test-key'
+    _setFetch(makeFetch())
+    mockSpawn.mockReturnValue(makeAfplayProc())
+    await speak('Stop')
+    expect(mockSpawn).toHaveBeenCalledWith('afplay', expect.arrayContaining([expect.stringMatching(/\.mp3$/)]), expect.any(Object))
+  })
+
+  it('falls back to say when ElevenLabs returns a non-200 status', async () => {
+    process.env.ELEVENLABS_API_KEY = 'test-key'
+    _setFetch(makeFetch(false, 401))
+    mockSpawn.mockReturnValue(makeAfplayProc())
+    await expect(speak('Stop')).resolves.toBeUndefined()
+    // ElevenLabs failed → no afplay for the API response, but no say either (just resolves)
+    expect(mockSpawn).not.toHaveBeenCalledWith('say', expect.any(Array), expect.any(Object))
+  })
+
+  it('kills the previous process when a new speak starts', async () => {
+    const proc1 = makeAfplayProc(true /* hang */)
+    const proc2 = makeAfplayProc()
     mockSpawn.mockReturnValueOnce(proc1).mockReturnValueOnce(proc2)
 
-    const p1 = speak('Stop') // starts proc1, hangs
-    await speak('Stop')      // kills proc1, starts proc2, resolves
+    const p1 = speak('Stop') // spawns proc1 via say (sync), hangs
+    await speak('Stop')      // killTTS() kills proc1, spawns proc2, resolves
 
     expect(proc1.kill).toHaveBeenCalled()
-    p1.catch(() => {}) // proc1 never exits — suppress unhandled rejection
+    p1.catch(() => {})
   })
 })
 
@@ -163,7 +200,7 @@ describe('HTTP server', () => {
   })
 
   beforeEach(() => {
-    _setSpawnFn(vi.fn().mockReturnValue(makeSayProc()))
+    _setSpawnFn(vi.fn().mockReturnValue(makeAfplayProc()))
     resetQueue()
   })
 

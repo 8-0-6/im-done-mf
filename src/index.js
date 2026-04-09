@@ -22,7 +22,17 @@ const STT_TIMEOUT_MS = 35_000
 const QUEUE_MAX = 5
 const PRIORITY = { Notification: 0, Stop: 1 }
 const LOG = '[imdone]'
-const DEFAULT_VOICE = 'Rocko (English (US))'
+const AUDIO_SESSION_TEARDOWN_MS = 200
+const ELEVENLABS_API_HOST = 'api.elevenlabs.io'
+const ELEVENLABS_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM' // Rachel
+const AUDIO_DIR = path.join(os.homedir(), '.imdone', 'audio')
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.aiff', '.m4a'])
+const DEFAULT_SAY_VOICE = 'Rocko (English (US))'
+const ABBREVIATION_REPLACEMENTS = [
+  [/\bmf\b/gi, 'motherfucker'],
+  [/\brn\b/gi, 'right now'],
+  [/\bfr\b/gi, 'for real'],
+]
 
 function normalizeHookType(event) {
   const raw = event && (
@@ -62,6 +72,24 @@ function readJSON(filePath, label, { allowMissing = false } = {}) {
   catch { die(`${label} is not valid JSON. Fix it and re-run imdone.\nPath: ${filePath}`) }
 }
 
+function normalizePhraseText(value, dirty = { changed: false }) {
+  if (typeof value === 'string') {
+    let s = value
+    for (const [pattern, replacement] of ABBREVIATION_REPLACEMENTS) {
+      s = s.replace(pattern, replacement)
+    }
+    if (s !== value) dirty.changed = true
+    return s
+  }
+  if (Array.isArray(value)) return value.map(v => normalizePhraseText(v, dirty))
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, normalizePhraseText(v, dirty)])
+    )
+  }
+  return value
+}
+
 // --- Startup checks ---
 function runStartupChecks() {
   try { execFileSync('which', ['claude'], { stdio: 'ignore' }) }
@@ -87,7 +115,12 @@ function loadPhrases() {
     if (e.code !== 'EEXIST') die(`Could not create phrases.json: ${e.message}`)
   }
 
-  phrases = readJSON(PHRASES_PATH, 'phrases.json')
+  const loaded = readJSON(PHRASES_PATH, 'phrases.json')
+  const dirty = { changed: false }
+  phrases = normalizePhraseText(loaded, dirty)
+
+  // Keep user's phrases file in sync so TTS always says full words.
+  if (dirty.changed) fs.writeFileSync(PHRASES_PATH, JSON.stringify(phrases, null, 2))
 }
 
 // --- Hook sync ---
@@ -109,18 +142,31 @@ function syncHooks() {
 }
 
 // --- TTS ---
+let fetchFn = fetch
 let ttsProc = null
+let ttsAbort = null
+
+function killTTS() {
+  if (ttsAbort) { ttsAbort.abort(); ttsAbort = null }
+  if (ttsProc) { ttsProc.kill(); ttsProc = null }
+}
+
+function findLocalAudioFile(eventName) {
+  const dir = path.join(AUDIO_DIR, eventName.toLowerCase())
+  let files
+  try { files = fs.readdirSync(dir) }
+  catch { return null }
+  const audioFiles = files.filter(f => AUDIO_EXTENSIONS.has(path.extname(f).toLowerCase()))
+  if (!audioFiles.length) return null
+  return path.join(dir, randomFrom(audioFiles))
+}
 
 function speak(eventName) {
   const pool = phrases[eventName] || phrases['Stop']
   const phrase = randomFrom(Array.isArray(pool) ? pool : [pool])
-  const voice = phrases.voice || DEFAULT_VOICE
 
   return new Promise((resolve) => {
-    if (ttsProc) { ttsProc.kill(); ttsProc = null }
-
-    const proc = spawnFn('say', ['-v', voice, phrase], { stdio: 'ignore' })
-    ttsProc = proc
+    killTTS()
     let done = false
 
     function finish() {
@@ -128,21 +174,84 @@ function speak(eventName) {
       done = true
       clearTimeout(timeout)
       ttsProc = null
+      ttsAbort = null
       resolve()
     }
 
     const timeout = setTimeout(() => {
-      console.error(`\n${LOG} say timed out — skipping`)
-      proc.kill()
+      console.error(`\n${LOG} TTS timed out — skipping`)
+      killTTS()
       finish()
     }, TTS_TIMEOUT_MS)
 
+    // Tier 1: local audio file
+    const localFile = findLocalAudioFile(eventName)
+    if (localFile) {
+      const player = spawnFn('afplay', [localFile], { stdio: 'ignore' })
+      ttsProc = player
+      player.on('exit', finish)
+      return
+    }
+
+    // Tier 2: ElevenLabs (if API key set)
+    const apiKey = process.env.ELEVENLABS_API_KEY
+    if (apiKey) {
+      const voiceId = process.env.ELEVENLABS_VOICE_ID || ELEVENLABS_DEFAULT_VOICE_ID
+      const controller = new AbortController()
+      ttsAbort = controller
+
+      fetchFn(`https://${ELEVENLABS_API_HOST}/v1/text-to-speech/${voiceId}`, {
+        method: 'POST',
+        headers: {
+          'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',
+        },
+        body: JSON.stringify({
+          text: phrase,
+          model_id: 'eleven_flash_v2_5',
+          voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        }),
+        signal: controller.signal,
+      }).then(async (res) => {
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '')
+          console.error(`${LOG} ElevenLabs error ${res.status}: ${errText.slice(0, 200)}`)
+          finish()
+          return
+        }
+        const buf = await res.arrayBuffer()
+        ttsAbort = null
+        const tmpFile = path.join(os.tmpdir(), `imdone-${Date.now()}.mp3`)
+        fs.writeFileSync(tmpFile, Buffer.from(buf))
+        const player = spawnFn('afplay', [tmpFile], { stdio: 'ignore' })
+        ttsProc = player
+        player.on('exit', () => { fs.unlink(tmpFile, () => {}); finish() })
+      }).catch((e) => {
+        if (e.name !== 'AbortError') console.error(`${LOG} ElevenLabs request failed: ${e.message}`)
+        finish()
+      })
+      return
+    }
+
+    // Tier 3: macOS say (always available fallback)
+    const voice = phrases.voice || DEFAULT_SAY_VOICE
+    const proc = spawnFn('say', ['-v', voice, phrase], { stdio: 'ignore' })
+    ttsProc = proc
     proc.on('exit', finish)
   })
 }
 
 // --- STT + PTY injection ---
 let ptyChild = null
+let sttProc = null
+
+function cancelSTT() {
+  if (sttProc) {
+    sttProc.kill()
+    sttProc = null
+  }
+}
 
 function listenAndInject() {
   if (!ptyChild) return Promise.resolve()
@@ -152,8 +261,10 @@ function listenAndInject() {
     return Promise.resolve()
   }
 
+  process.stdout.write(`\n${LOG} Listening... (speak now)\n`)
   return new Promise((resolve) => {
     const proc = spawnFn(LISTEN_BINARY, [], { stdio: ['ignore', 'pipe', 'inherit'] })
+    sttProc = proc
     let transcript = ''
     let done = false
 
@@ -161,6 +272,7 @@ function listenAndInject() {
       if (done) return
       done = true
       clearTimeout(timeout)
+      sttProc = null
       if (heard) {
         process.stdout.write(`\n${LOG} I heard: ${heard}\n`)
         ptyChild.write(heard + '\r')
@@ -209,6 +321,7 @@ function enqueue(event) {
     console.error(`${LOG} queue full — dropped ${dropped.hook_event_name} event`)
   }
 
+  cancelSTT()
   processQueue()
 }
 
@@ -218,8 +331,12 @@ async function processQueue() {
   while (queue.length > 0) {
     const event = queue.shift()
     try {
+      cancelSTT()
       await speak(event.hook_event_name)
-      if (event.hook_event_name === 'Stop') await listenAndInject()
+      if (event.hook_event_name === 'Stop') {
+        await new Promise(r => setTimeout(r, AUDIO_SESSION_TEARDOWN_MS))
+        await listenAndInject()
+      }
     }
     catch (e) { console.error(`${LOG} speak error:`, e.message) }
   }
@@ -311,11 +428,21 @@ async function runDiagnose() {
 
   const check = (name, ok, fix = null) => checks.push({ name, ok, fix })
 
-  try { execFileSync('which', ['say'], { stdio: 'ignore' }); check('`say` command on PATH', true) }
-  catch { check('`say` command on PATH', false, 'macOS 12+ required') }
-
   try { execFileSync('which', ['claude'], { stdio: 'ignore' }); check('`claude` on PATH', true) }
   catch { check('`claude` on PATH', false, 'Install Claude Code first') }
+
+  try { execFileSync('which', ['say'], { stdio: 'ignore' }); check('`say` on PATH', true) }
+  catch { check('`say` on PATH', false, 'macOS 12+ required') }
+
+  try { execFileSync('which', ['afplay'], { stdio: 'ignore' }); check('`afplay` on PATH', true) }
+  catch { check('`afplay` on PATH', false, 'macOS 12+ required') }
+
+  const stopAudio = findLocalAudioFile('Stop')
+  check('local audio files (Stop)', !!stopAudio,
+    `optional — drop .mp3/.wav files in ${path.join(AUDIO_DIR, 'stop')} for custom audio`)
+
+  check('ElevenLabs API key (optional)', !!process.env.ELEVENLABS_API_KEY,
+    'optional — export ELEVENLABS_API_KEY=your_key to enable ElevenLabs TTS')
 
   const settingsPath = path.join(process.cwd(), '.claude', 'settings.json')
   try {
@@ -361,12 +488,13 @@ if (require.main === module) {
 } else {
   // Test-only seams — not part of the public API
   function _setSpawnFn(fn) { spawnFn = fn }
+  function _setFetch(fn) { fetchFn = fn }
   function _resetProcessing() { isProcessing = false }
   function _setPtyChild(child) { ptyChild = child }
 
   module.exports = {
     enqueue, processQueue, speak, syncHooks, loadPhrases, startServer, randomFrom,
-    listenAndInject,
-    _queue: queue, _lastEventTime: lastEventTime, _setSpawnFn, _resetProcessing, _setPtyChild,
+    listenAndInject, cancelSTT,
+    _queue: queue, _lastEventTime: lastEventTime, _setSpawnFn, _setFetch, _resetProcessing, _setPtyChild,
   }
 }
