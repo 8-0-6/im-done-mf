@@ -6,10 +6,20 @@
 const fs = require('fs')
 const path = require('path')
 
-const prebuildsDir = path.join(__dirname, '..', 'node_modules', 'node-pty', 'prebuilds')
+// Use require.resolve so Node's module resolution finds node-pty wherever npm
+// placed it — handles hoisting (node-pty lives in the parent's node_modules,
+// not imdone-mf's own node_modules) as well as nested/workspace layouts.
+let prebuildsDir
+try {
+  const nodePtyPkg = require.resolve('node-pty/package.json')
+  prebuildsDir = path.join(path.dirname(nodePtyPkg), 'prebuilds')
+} catch (e) {
+  // node-pty not resolvable — nothing to fix
+  process.exit(0)
+}
 
 if (!fs.existsSync(prebuildsDir)) {
-  // Not installed yet (e.g. running postinstall before node_modules exists) — skip
+  // prebuilds dir absent (e.g. locally compiled build) — nothing to fix
   process.exit(0)
 }
 
