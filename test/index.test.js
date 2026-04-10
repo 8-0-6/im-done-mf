@@ -19,11 +19,11 @@ vi.mock('node-pty', () => ({
 const {
   randomFrom, enqueue, speak, syncHooks, loadPhrases, startServer,
   listenAndInject,
-  _queue, _lastEventTime, _setSpawnFn, _setFetch, _resetProcessing, _setPtyChild,
+  _queue, _lastEventTime, _setSpawnFn, _setFetch, _setAudioDir, _resetProcessing, _setPtyChild,
 } = await import('../src/index.js')
 
 // ─── Shared mock factories ────────────────────────────────────────────────────
-function makeAfplayProc(hang = false) {
+function makeProcMock(hang = false) {
   const proc = { kill: vi.fn(), on: vi.fn() }
   proc.on.mockImplementation((event, cb) => {
     if (event === 'exit' && !hang) setImmediate(() => cb(0))
@@ -85,7 +85,7 @@ describe('enqueue', () => {
 
   beforeEach(() => {
     mockSpawn = vi.fn()
-    mockSpawn.mockReturnValue(makeAfplayProc(true /* hang — keeps queue intact */))
+    mockSpawn.mockReturnValue(makeProcMock(true /* hang — keeps queue intact */))
     _setSpawnFn(mockSpawn)
     _resetProcessing()
     resetQueue()
@@ -132,24 +132,26 @@ describe('speak', () => {
     mockSpawn = vi.fn()
     _setSpawnFn(mockSpawn)
     delete process.env.ELEVENLABS_API_KEY
-    // Isolate local audio dir to an empty tmp dir so no real files leak in
+    // Point audio dir to an empty tmp dir so real ~/.imdone/audio files don't interfere
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'imdone-speak-'))
+    _setAudioDir(tmpDir)
   })
 
   afterEach(() => {
     delete process.env.ELEVENLABS_API_KEY
+    _setAudioDir(path.join(os.homedir(), '.imdone', 'audio'))
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   // Tier 3: say fallback (no local files, no API key)
   it('falls back to say when no local files and no API key', async () => {
-    mockSpawn.mockReturnValue(makeAfplayProc())
+    mockSpawn.mockReturnValue(makeProcMock())
     await speak('Stop')
     expect(mockSpawn).toHaveBeenCalledWith('say', expect.arrayContaining(['-v']), expect.any(Object))
   })
 
   it('falls back to Stop phrases for unknown event names via say', async () => {
-    mockSpawn.mockReturnValue(makeAfplayProc())
+    mockSpawn.mockReturnValue(makeProcMock())
     await expect(speak('UnknownEvent')).resolves.toBeUndefined()
     expect(mockSpawn).toHaveBeenCalledWith('say', expect.any(Array), expect.any(Object))
   })
@@ -158,7 +160,7 @@ describe('speak', () => {
   it('uses ElevenLabs when API key is set and no local files', async () => {
     process.env.ELEVENLABS_API_KEY = 'test-key'
     _setFetch(makeFetch())
-    mockSpawn.mockReturnValue(makeAfplayProc())
+    mockSpawn.mockReturnValue(makeProcMock())
     await speak('Stop')
     expect(mockSpawn).toHaveBeenCalledWith('afplay', expect.arrayContaining([expect.stringMatching(/\.mp3$/)]), expect.any(Object))
   })
@@ -166,15 +168,15 @@ describe('speak', () => {
   it('falls back to say when ElevenLabs returns a non-200 status', async () => {
     process.env.ELEVENLABS_API_KEY = 'test-key'
     _setFetch(makeFetch(false, 401))
-    mockSpawn.mockReturnValue(makeAfplayProc())
+    mockSpawn.mockReturnValue(makeProcMock())
     await expect(speak('Stop')).resolves.toBeUndefined()
     // ElevenLabs failed → no afplay for the API response, but no say either (just resolves)
     expect(mockSpawn).not.toHaveBeenCalledWith('say', expect.any(Array), expect.any(Object))
   })
 
   it('kills the previous process when a new speak starts', async () => {
-    const proc1 = makeAfplayProc(true /* hang */)
-    const proc2 = makeAfplayProc()
+    const proc1 = makeProcMock(true /* hang */)
+    const proc2 = makeProcMock()
     mockSpawn.mockReturnValueOnce(proc1).mockReturnValueOnce(proc2)
 
     const p1 = speak('Stop') // spawns proc1 via say (sync), hangs
@@ -200,7 +202,7 @@ describe('HTTP server', () => {
   })
 
   beforeEach(() => {
-    _setSpawnFn(vi.fn().mockReturnValue(makeAfplayProc()))
+    _setSpawnFn(vi.fn().mockReturnValue(makeProcMock()))
     resetQueue()
   })
 
@@ -292,10 +294,13 @@ describe('listenAndInject', () => {
   it('injects transcript + \\r into ptyChild when imdone-listen exits 0 with output', async () => {
     const fakeProc = { stdout: { on: vi.fn() }, on: vi.fn(), kill: vi.fn() }
     fakeProc.stdout.on.mockImplementation((event, cb) => {
-      if (event === 'data') setImmediate(() => cb('ship it'))
+      // imdone-listen now emits READY\n before the transcript
+      if (event === 'data') setImmediate(() => cb('READY\nship it'))
     })
     fakeProc.on.mockImplementation((event, cb) => {
+      // 'exit' fires first (sets exitCode), then 'close' fires to trigger finish()
       if (event === 'exit') setImmediate(() => cb(0))
+      if (event === 'close') setImmediate(() => cb(0))
     })
     _setSpawnFn(vi.fn().mockReturnValue(fakeProc))
 
@@ -308,6 +313,7 @@ describe('listenAndInject', () => {
     const fakeProc = { stdout: { on: vi.fn() }, on: vi.fn(), kill: vi.fn() }
     fakeProc.on.mockImplementation((event, cb) => {
       if (event === 'exit') setImmediate(() => cb(1))
+      if (event === 'close') setImmediate(() => cb(1))
     })
     _setSpawnFn(vi.fn().mockReturnValue(fakeProc))
 

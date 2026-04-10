@@ -22,10 +22,10 @@ const STT_TIMEOUT_MS = 35_000
 const QUEUE_MAX = 5
 const PRIORITY = { Notification: 0, Stop: 1 }
 const LOG = '[imdone]'
-const AUDIO_SESSION_TEARDOWN_MS = 200
+const AUDIO_SESSION_TEARDOWN_MS = 50
 const ELEVENLABS_API_HOST = 'api.elevenlabs.io'
 const ELEVENLABS_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM' // Rachel
-const AUDIO_DIR = path.join(os.homedir(), '.imdone', 'audio')
+let AUDIO_DIR = path.join(IMDONE_DIR, 'audio')
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.aiff', '.m4a'])
 const DEFAULT_SAY_VOICE = 'Rocko (English (US))'
 const ABBREVIATION_REPLACEMENTS = [
@@ -90,14 +90,16 @@ function normalizePhraseText(value, dirty = { changed: false }) {
   return value
 }
 
+// --- Helpers ---
+function hasCommand(name) {
+  try { execFileSync('which', [name], { stdio: 'ignore' }); return true }
+  catch { return false }
+}
+
 // --- Startup checks ---
 function runStartupChecks() {
-  try { execFileSync('which', ['claude'], { stdio: 'ignore' }) }
-  catch { die('`claude` not found on PATH. Install Claude Code first.') }
-
-  try { execFileSync('which', ['say'], { stdio: 'ignore' }) }
-  catch { die('macOS `say` command not found. macOS 12+ required.') }
-
+  if (!hasCommand('claude')) die('`claude` not found on PATH. Install Claude Code first.')
+  if (!hasCommand('say')) die('macOS `say` command not found. macOS 12+ required.')
   loadPhrases()
   syncHooks()
 }
@@ -261,11 +263,13 @@ function listenAndInject() {
     return Promise.resolve()
   }
 
-  process.stdout.write(`\n${LOG} Listening... (speak now)\n`)
   return new Promise((resolve) => {
     const proc = spawnFn(LISTEN_BINARY, [], { stdio: ['ignore', 'pipe', 'inherit'] })
     sttProc = proc
+
     let transcript = ''
+    let rawBuf = ''       // accumulates stdout until READY signal
+    let readyReceived = false
     let done = false
 
     function finish(heard) {
@@ -282,16 +286,37 @@ function listenAndInject() {
       resolve()
     }
 
+    proc.on('error', (e) => {
+      process.stdout.write(`\n${LOG} imdone-listen failed to start: ${e.message}\n`)
+      finish(null)
+    })
+
     const timeout = setTimeout(() => { proc.kill(); finish(null) }, STT_TIMEOUT_MS)
 
     proc.stdout.on('data', (chunk) => {
-      transcript += chunk
-      if (transcript.length > 10_000) transcript = transcript.slice(-5_000)
+      const text = chunk.toString()
+      if (!readyReceived) {
+        rawBuf += text
+        const readyIdx = rawBuf.indexOf('READY\n')
+        if (readyIdx !== -1) {
+          readyReceived = true
+          process.stdout.write(`\n${LOG} Listening... (speak now)\n`)
+          const rest = rawBuf.slice(readyIdx + 6)
+          if (rest) transcript += rest
+          rawBuf = ''
+        }
+      } else {
+        transcript += text
+        if (transcript.length > 10_000) transcript = transcript.slice(-5_000)
+      }
     })
 
-    proc.on('exit', (code) => {
+    let exitCode = null
+    proc.on('exit', (code) => { exitCode = code })
+    proc.on('close', () => {
+      if (exitCode !== 0 && exitCode !== null) process.stdout.write(`\n${LOG} imdone-listen exited with code ${exitCode}\n`)
       const heard = transcript.trim()
-      finish(code === 0 && heard ? heard : null)
+      finish(exitCode === 0 && heard ? heard : null)
     })
   })
 }
@@ -333,9 +358,9 @@ async function processQueue() {
     try {
       cancelSTT()
       await speak(event.hook_event_name)
-      if (event.hook_event_name === 'Stop') {
+      if (event.hook_event_name === 'Stop' && queue.length === 0) {
         await new Promise(r => setTimeout(r, AUDIO_SESSION_TEARDOWN_MS))
-        await listenAndInject()
+        if (queue.length === 0) await listenAndInject()
       }
     }
     catch (e) { console.error(`${LOG} speak error:`, e.message) }
@@ -428,14 +453,9 @@ async function runDiagnose() {
 
   const check = (name, ok, fix = null) => checks.push({ name, ok, fix })
 
-  try { execFileSync('which', ['claude'], { stdio: 'ignore' }); check('`claude` on PATH', true) }
-  catch { check('`claude` on PATH', false, 'Install Claude Code first') }
-
-  try { execFileSync('which', ['say'], { stdio: 'ignore' }); check('`say` on PATH', true) }
-  catch { check('`say` on PATH', false, 'macOS 12+ required') }
-
-  try { execFileSync('which', ['afplay'], { stdio: 'ignore' }); check('`afplay` on PATH', true) }
-  catch { check('`afplay` on PATH', false, 'macOS 12+ required') }
+  check('`claude` on PATH', hasCommand('claude'), 'Install Claude Code first')
+  check('`say` on PATH', hasCommand('say'), 'macOS 12+ required')
+  check('`afplay` on PATH', hasCommand('afplay'), 'macOS 12+ required')
 
   const stopAudio = findLocalAudioFile('Stop')
   check('local audio files (Stop)', !!stopAudio,
@@ -445,17 +465,20 @@ async function runDiagnose() {
     'optional — export ELEVENLABS_API_KEY=your_key to enable ElevenLabs TTS')
 
   const settingsPath = path.join(process.cwd(), '.claude', 'settings.json')
-  try {
-    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
-    const url = s?.hooks?.Stop?.[0]?.hooks?.[0]?.url
+  const settings = readJSON(settingsPath, '.claude/settings.json', { allowMissing: true })
+  if (settings) {
+    const url = settings?.hooks?.Stop?.[0]?.hooks?.[0]?.url
     check('.claude/settings.json hook URL', !!(url && url.includes('/event')), 'Run `imdone` once to auto-configure')
-  } catch { check('.claude/settings.json', false, 'Run `imdone` once to auto-configure') }
+  } else {
+    check('.claude/settings.json', false, 'Run `imdone` once to auto-configure')
+  }
 
-  try {
-    const raw = fs.readFileSync(PHRASES_PATH, 'utf8')
-    try { JSON.parse(raw); check('phrases.json valid', true) }
-    catch { check('phrases.json', false, 'Fix JSON syntax error') }
-  } catch (e) { check('phrases.json', false, e.code === 'ENOENT' ? 'Run `imdone` once to create defaults' : e.message) }
+  const phrasesData = readJSON(PHRASES_PATH, 'phrases.json', { allowMissing: true })
+  if (phrasesData === null) {
+    check('phrases.json', false, 'Run `imdone` once to create defaults')
+  } else {
+    check('phrases.json valid', true)
+  }
 
   check('imdone-listen binary', fs.existsSync(LISTEN_BINARY), 'Reinstall imdone-mf')
 
@@ -489,12 +512,13 @@ if (require.main === module) {
   // Test-only seams — not part of the public API
   function _setSpawnFn(fn) { spawnFn = fn }
   function _setFetch(fn) { fetchFn = fn }
+  function _setAudioDir(dir) { AUDIO_DIR = dir }
   function _resetProcessing() { isProcessing = false }
   function _setPtyChild(child) { ptyChild = child }
 
   module.exports = {
     enqueue, processQueue, speak, syncHooks, loadPhrases, startServer, randomFrom,
     listenAndInject, cancelSTT,
-    _queue: queue, _lastEventTime: lastEventTime, _setSpawnFn, _setFetch, _resetProcessing, _setPtyChild,
+    _queue: queue, _lastEventTime: lastEventTime, _setSpawnFn, _setFetch, _setAudioDir, _resetProcessing, _setPtyChild,
   }
 }

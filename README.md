@@ -43,6 +43,8 @@ imdone --diagnose             # check all system dependencies
 
 On first run, `imdone` auto-writes `.claude/settings.json` in your project directory with the HTTP hook config. You never touch that file manually.
 
+"Listening..." appears immediately when TTS finishes. Speech is committed after 2 seconds of silence — mid-sentence pauses are fine. Max recording: 60 seconds.
+
 ---
 
 ## How it works

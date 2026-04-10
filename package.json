@@ -1,6 +1,6 @@
 {
   "name": "imdone-mf",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Voice layer for Claude Code. Speaks when your shit's done.",
   "bin": {
     "imdone": "./src/index.js"
