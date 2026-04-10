@@ -31,6 +31,23 @@ That's it. No compilation. Pre-built binaries for arm64 and x86_64 are downloade
 - Node.js 18+
 - [Claude Code](https://claude.ai/code) installed (`claude` on your PATH)
 
+### Permission error during install?
+
+If you see `EACCES: permission denied` when running `npm install -g`, your npm global prefix points to a system directory that requires root. Fix it by pointing npm at a user-writable directory:
+
+```bash
+mkdir -p ~/.local/npm-global
+npm config set prefix '~/.local/npm-global'
+```
+
+Then add it to your PATH in `~/.zshrc` (or `~/.bashrc`):
+
+```bash
+export PATH="$HOME/.local/npm-global/bin:$PATH"
+```
+
+Reload your shell (`source ~/.zshrc`) and re-run the install. You only need to do this once.
+
 ---
 
 ## Usage
